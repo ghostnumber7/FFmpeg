@@ -68,6 +68,12 @@ int image_get_linesize(int width, int plane,
         return AVERROR(EINVAL);
     linesize = max_step * shifted_w;
 
+    #if CONFIG_LIBXMA2API
+    if(strcmp(desc->name, "xv15") == 0) {
+        linesize = ((width + 2) / 3) * 4;
+    }
+    #endif
+
     if (desc->flags & AV_PIX_FMT_FLAG_BITSTREAM)
         linesize = (linesize + 7) >> 3;
     return linesize;
