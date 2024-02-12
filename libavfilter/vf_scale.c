@@ -151,6 +151,7 @@ typedef struct ScaleContext {
 
     int eval_mode;              ///< expression evaluation mode
 
+    AVFrame *temp_frame[2];
 } ScaleContext;
 
 const AVFilter ff_vf_scale2ref;
@@ -324,6 +325,8 @@ static av_cold int init_dict(AVFilterContext *ctx, AVDictionary **opts)
     *opts = NULL;
 
     scale->in_frame_range = AVCOL_RANGE_UNSPECIFIED;
+    scale->temp_frame[0] = NULL;
+    scale->temp_frame[1] = NULL;
 
     return 0;
 }
@@ -339,6 +342,10 @@ static av_cold void uninit(AVFilterContext *ctx)
     sws_freeContext(scale->isws[1]);
     scale->sws = NULL;
     av_dict_free(&scale->opts);
+    if (scale->temp_frame[0])
+        av_frame_unref(scale->temp_frame[0]);
+    if (scale->temp_frame[1])
+        av_frame_unref(scale->temp_frame[1]);
 }
 
 static int query_formats(AVFilterContext *ctx)
@@ -483,11 +490,16 @@ static int config_props(AVFilterLink *outlink)
     AVFilterLink *inlink  = ctx->filter == &ff_vf_scale2ref ?
                             outlink->src->inputs[1] :
                             outlink->src->inputs[0];
+    enum AVPixelFormat infmt = inlink0->format;
     enum AVPixelFormat outfmt = outlink->format;
     const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(inlink->format);
     ScaleContext *scale = ctx->priv;
     int ret;
 
+    if (infmt == AV_PIX_FMT_XV15)
+        infmt = AV_PIX_FMT_YUV420P10LE;
+    if (outfmt == AV_PIX_FMT_XV15)
+        outfmt = AV_PIX_FMT_YUV420P10LE;
     if ((ret = scale_eval_dimensions(ctx)) < 0)
         goto fail;
 
@@ -536,7 +548,7 @@ static int config_props(AVFilterLink *outlink)
 
             av_opt_set_int(s, "srcw", inlink0 ->w, 0);
             av_opt_set_int(s, "srch", inlink0 ->h >> !!i, 0);
-            av_opt_set_int(s, "src_format", inlink0->format, 0);
+            av_opt_set_int(s, "src_format", infmt, 0);
             av_opt_set_int(s, "dstw", outlink->w, 0);
             av_opt_set_int(s, "dsth", outlink->h >> !!i, 0);
             av_opt_set_int(s, "dst_format", outfmt, 0);
@@ -564,11 +576,11 @@ static int config_props(AVFilterLink *outlink)
             /* Override YUV420P default settings to have the correct (MPEG-2) chroma positions
              * MPEG-2 chroma positions are used by convention
              * XXX: support other 4:2:0 pixel formats */
-            if (inlink0->format == AV_PIX_FMT_YUV420P && scale->in_v_chr_pos == -513) {
+            if (infmt == AV_PIX_FMT_YUV420P && scale->in_v_chr_pos == -513) {
                 in_v_chr_pos = (i == 0) ? 128 : (i == 1) ? 64 : 192;
             }
 
-            if (outlink->format == AV_PIX_FMT_YUV420P && scale->out_v_chr_pos == -513) {
+            if (outfmt == AV_PIX_FMT_YUV420P && scale->out_v_chr_pos == -513) {
                 out_v_chr_pos = (i == 0) ? 128 : (i == 1) ? 64 : 192;
             }
 
@@ -590,7 +602,7 @@ static int config_props(AVFilterLink *outlink)
         outlink->sample_aspect_ratio = inlink0->sample_aspect_ratio;
 
     av_log(ctx, AV_LOG_VERBOSE, "w:%d h:%d fmt:%s sar:%d/%d -> w:%d h:%d fmt:%s sar:%d/%d flags:0x%0x\n",
-           inlink ->w, inlink ->h, av_get_pix_fmt_name( inlink->format),
+           inlink ->w, inlink ->h, av_get_pix_fmt_name( inlink0->format),
            inlink->sample_aspect_ratio.num, inlink->sample_aspect_ratio.den,
            outlink->w, outlink->h, av_get_pix_fmt_name(outlink->format),
            outlink->sample_aspect_ratio.num, outlink->sample_aspect_ratio.den,
@@ -623,6 +635,354 @@ static int request_frame_ref(AVFilterLink *outlink)
 {
     return ff_request_frame(outlink->src->inputs[1]);
 }
+
+#if CONFIG_LIBXMA2API
+/**
+ * Extracts a 10 bit pixel from a vcu word and stores it in a 16 bit word
+ * @param pixel_index Which pixel of the vcu word to take (0-2)
+ * @param vcu_word The source vcu word containing 3 pixels
+ * @param out_word Where to store the first (LSB) pixel
+ * @return void
+ */
+static void extract_pixel_from_xv15_word(uint8_t pixel_index, uint32_t vcu_word,
+                                       uint16_t** out_word)
+{
+    if(pixel_index == 0) {
+        *(*out_word)++ = (uint16_t) (vcu_word & 0x3FF);
+    } else if(pixel_index == 1) {
+        *(*out_word)++ = (uint16_t) ((vcu_word & 0xFFC00)    >> 10);
+    } else {
+        *(*out_word)++ = (uint16_t) ((vcu_word & 0x3FF00000) >> 20);
+    }
+}
+
+/**
+ * Converts an xv15 word into yuv420p10le words stored in the y plane.
+ * @param num_pxls_to_xtrct The number of pixels to extract from the source
+ * word
+ * @param xv15_word The source xv15 word containing 3 pixels of data
+ * @param y_plane The output y plane
+ * @return void
+ */
+static void y_xv15_wrd_10le_wrds(uint8_t num_pxls_to_xtrct, uint32_t xv15_word,
+                                 uint16_t** y_plane)
+{
+    switch(num_pxls_to_xtrct) {
+        case 3:
+            extract_pixel_from_xv15_word(0, xv15_word, y_plane);
+            extract_pixel_from_xv15_word(1, xv15_word, y_plane);
+            extract_pixel_from_xv15_word(2, xv15_word, y_plane);
+            break;
+        case 2:
+            extract_pixel_from_xv15_word(0, xv15_word, y_plane);
+            extract_pixel_from_xv15_word(1, xv15_word, y_plane);
+            break;
+        case 1:
+            extract_pixel_from_xv15_word(0, xv15_word, y_plane);
+            break;
+        default:
+            return;
+    }
+}
+
+/**
+ * Converts 1-2 xv15 words into yuv420p10le words stored in their respective u
+ * & v planes.
+ * @param num_pxls_to_xtrct The number of pixels to extract from the source
+ * words
+ * @param xv15_word1 The first xv15 source word
+ * @param xv15_word2 The second xv15 source word
+ * @param u_plane The output u plane
+ * @param v_plane The output v plane
+ * @return void
+ */
+static void uv_xv15_wrd_to_10le_wrds(uint8_t num_pxls_to_xtrct,
+                                     uint32_t xv15_word1, uint32_t xv15_word2,
+                                     uint16_t** u_plane, uint16_t** v_plane)
+{
+    switch(num_pxls_to_xtrct) {
+        case 6:
+            extract_pixel_from_xv15_word(0, xv15_word1, u_plane);
+            extract_pixel_from_xv15_word(1, xv15_word1, v_plane);
+            extract_pixel_from_xv15_word(2, xv15_word1, u_plane);
+
+            extract_pixel_from_xv15_word(0, xv15_word2, v_plane);
+            extract_pixel_from_xv15_word(1, xv15_word2, u_plane);
+            extract_pixel_from_xv15_word(2, xv15_word2, v_plane);
+            break;
+        case 5:
+            extract_pixel_from_xv15_word(0, xv15_word1, u_plane);
+            extract_pixel_from_xv15_word(1, xv15_word1, v_plane);
+            extract_pixel_from_xv15_word(2, xv15_word1, u_plane);
+
+            extract_pixel_from_xv15_word(0, xv15_word2, v_plane);
+            extract_pixel_from_xv15_word(1, xv15_word2, u_plane);
+            break;
+        case 4:
+            extract_pixel_from_xv15_word(0, xv15_word1, u_plane);
+            extract_pixel_from_xv15_word(1, xv15_word1, v_plane);
+            extract_pixel_from_xv15_word(2, xv15_word1, u_plane);
+
+            extract_pixel_from_xv15_word(0, xv15_word2, v_plane);
+            break;
+        case 3:
+            extract_pixel_from_xv15_word(0, xv15_word1, u_plane);
+            extract_pixel_from_xv15_word(1, xv15_word1, v_plane);
+            extract_pixel_from_xv15_word(2, xv15_word1, u_plane);
+            break;
+        case 2:
+            extract_pixel_from_xv15_word(0, xv15_word1, u_plane);
+            extract_pixel_from_xv15_word(1, xv15_word1, v_plane);
+            break;
+        case 1:
+            extract_pixel_from_xv15_word(0, xv15_word1, u_plane);
+            break;
+        default:
+            return;
+    }
+}
+
+/**
+ * Get the buffer from the fpga and format it into yuv420p10le format.
+ * @param xframe The frame which is used to get the buffer from device
+ * @param in The input AVFrame containing frame info
+ * @param out The AVFrame into which the yuv420p10le frame will be stored.
+ * @return 0 on success or -1 on error
+ */
+static int conv_xv15_to_yuv420p10le(AVFrame* in, AVFrame* out)
+{
+    out->linesize[0] = out->width * 2;
+    out->linesize[1] = out->linesize[0] / 2;
+    out->linesize[2] = out->linesize[1];
+    uint16_t* y_plane       = (uint16_t*)out->data[0];
+    uint32_t* current_line  = (uint32_t*)(in->data[0]);
+    uint16_t total_words_in_line = in->linesize[0] / sizeof(uint32_t);
+    uint16_t valid_words_in_line = in->width / 3;
+    uint8_t  leftover_pixels     = in->width % 3;
+    uint16_t num_rows_in_plane   = in->height;
+    uint16_t w, h;
+    for (h = 0; h < num_rows_in_plane; h++) {
+        for (w = 0; w < valid_words_in_line; w++) {
+            y_xv15_wrd_10le_wrds(3, current_line[w], &y_plane);
+        }
+        y_xv15_wrd_10le_wrds(leftover_pixels, current_line[w],
+                                             &y_plane);
+        current_line += total_words_in_line;
+    }
+    uint16_t* u_plane = (uint16_t*)out->data[1];
+    uint16_t* v_plane = (uint16_t*)out->data[2];
+    current_line      = (uint32_t*)(in->data[1]);
+    num_rows_in_plane   = in->height / 2;
+    valid_words_in_line = in->width / 6; // Reading 2 words at a time
+    leftover_pixels     = in->width % 6;
+    size_t word_index;
+    for (h = 0; h < num_rows_in_plane; h++) {
+        word_index = 0;
+        for (w = 0; w < valid_words_in_line; w++) {
+            uv_xv15_wrd_to_10le_wrds(6, current_line[word_index],
+                                     current_line[word_index+1], &u_plane,
+                                     &v_plane);
+            word_index += 2;
+        }
+        uv_xv15_wrd_to_10le_wrds(leftover_pixels,
+                                 current_line[word_index],
+                                 current_line[word_index+1], &u_plane,
+                                 &v_plane);
+        current_line += total_words_in_line;
+    }
+    return 0;
+}
+
+/**
+ * Write the values of 3 pixels into the next word of the xv15 (aka nv12_10le32)
+ * buffer and increment the buffer to the next 32 bit WORD.
+ * @param p1 The first pixel to be written (LSB)
+ * @param p2 The second pixel to be written
+ * @param p3 The third pixel to be written
+ * @param xv15_buffer A pointer to the output xv15 (aka nv12_10le32)
+ * buffer
+ * @return void
+ */
+static void yuv10b_pixls_to_xv15_wrd(uint16_t p1, uint16_t p2,
+                                     uint16_t p3,
+                                     uint32_t** xv15_buffer) {
+    *(*xv15_buffer)++ = 0x3FFFFFFF & (p1 | (p2 << 10) | (p3 << 20));
+}
+
+/**
+ * Write up to 3 pixels from the source y buffer into the xv15 (aka nv12_10le32)
+ * buffer
+ * @param num_pixels_to_write The number of pixels to write. 1-3
+ * @param y_buffer A pointer to the source y plane buffer
+ * @param xv15_buffer A pointer to the output xv15 (aka nv12_10le32) buffer
+ * @return void
+ */
+static void y_10b_seg_to_xv15_wrd(uint8_t num_pixels_to_write,
+                                  uint16_t** y_buffer, uint32_t** xv15_buffer)
+{
+    switch(num_pixels_to_write) {
+        case 3:
+            yuv10b_pixls_to_xv15_wrd((*y_buffer)[0], (*y_buffer)[1],
+                                    (*y_buffer)[2], xv15_buffer);
+            break;
+        case 2:
+            yuv10b_pixls_to_xv15_wrd((*y_buffer)[0], (*y_buffer)[1], 0,
+                                     xv15_buffer);
+            break;
+        case 1:
+            yuv10b_pixls_to_xv15_wrd((*y_buffer)[0], 0, 0, xv15_buffer);
+            break;
+        default:
+            return;
+    }
+    *y_buffer += num_pixels_to_write;
+}
+
+/**
+ * Write up to 6 pixels from the source u & v buffers into the xv15
+ * (aka nv12_10le32) buffer
+ * @param num_pixels_to_write The number of pixels to write. 1-6
+ * @param u_buffer A pointer to the source u plane buffer
+ * @param v_buffer A pointer to the source v plane buffer
+ * @param xv15_buffer A pointer to the output xv15 (aka nv12_10le32) buffer
+ * @return void
+ */
+static void uv_10b_seg_to_xv15_wrd(uint8_t num_pixels_to_write,
+                                   uint16_t** u_buffer, uint16_t** v_buffer,
+                                   uint32_t** xv15_buffer)
+{
+    switch(num_pixels_to_write) {
+        case 6:
+            yuv10b_pixls_to_xv15_wrd((*u_buffer)[0], (*v_buffer)[0],
+                                    (*u_buffer)[1], xv15_buffer);
+            yuv10b_pixls_to_xv15_wrd((*v_buffer)[1], (*u_buffer)[2],
+                                    (*v_buffer)[2], xv15_buffer);
+            break;
+        case 5:
+            yuv10b_pixls_to_xv15_wrd((*u_buffer)[0], (*v_buffer)[0],
+                                    (*u_buffer)[1], xv15_buffer);
+            yuv10b_pixls_to_xv15_wrd((*v_buffer)[1], (*u_buffer)[2], 0,
+                                     xv15_buffer);
+            break;
+        case 4:
+            yuv10b_pixls_to_xv15_wrd((*u_buffer)[0], (*v_buffer)[0],
+                                    (*u_buffer)[1], xv15_buffer);
+            yuv10b_pixls_to_xv15_wrd((*v_buffer)[1], 0, 0, xv15_buffer);
+            break;
+        case 3:
+            yuv10b_pixls_to_xv15_wrd((*u_buffer)[0], (*v_buffer)[0],
+                                    (*u_buffer)[1], xv15_buffer);
+            break;
+        case 2:
+            yuv10b_pixls_to_xv15_wrd((*u_buffer)[0], (*v_buffer)[0], 0,
+                                     xv15_buffer);
+            break;
+        case 1:
+            yuv10b_pixls_to_xv15_wrd((*u_buffer)[0], 0, 0, xv15_buffer);
+            break;
+        default:
+            return;
+    }
+    *u_buffer += (num_pixels_to_write + 1) / 2;
+    *v_buffer += num_pixels_to_write / 2;
+}
+
+/**
+ * Convert the input yuv420p10le frame into the xv15 (nv12_10le32) format
+ * @param in The input AVFrame containing frame info + the yuv420p10le frame
+ * @param out The AVFrame into which the vcu formatted frame will be stored
+ * @return 0 on success or -1 on error
+ */
+static int32_t conv_yuv420p10le_to_xv15(const AVFrame* in, AVFrame* out)
+{
+    out->linesize[0] = ((in->width + 2) / 3) * 4;
+    out->linesize[1] = out->linesize[0];
+    out->data[0] = out->buf[0]->data;
+    out->data[1] = out->buf[1]->data;
+
+    uint16_t  pixels_per_word   = 3;
+    uint16_t* y_buffer;
+    uint32_t* current_buffer    = (uint32_t*)(out->data[0]);
+    uint16_t  rows_in_plane     = in->height;
+    uint16_t  words_in_line     = in->width / pixels_per_word;
+    uint8_t   leftover_pixels   = in->width % pixels_per_word;
+    for(uint16_t h = 0; h < rows_in_plane; h++) {
+        y_buffer                = (uint16_t*)((uint8_t*)in->data[0] + (h * in->linesize[0]));
+        for(uint16_t w = 0; w < words_in_line; w++) {
+            y_10b_seg_to_xv15_wrd(pixels_per_word, &y_buffer, &current_buffer);
+        }
+        if(leftover_pixels) {
+            y_10b_seg_to_xv15_wrd(leftover_pixels, &y_buffer, &current_buffer);
+        }
+    }
+
+    pixels_per_word     = 6;
+    uint16_t* u_buffer;
+    uint16_t* v_buffer;
+    current_buffer      = (uint32_t*)(out->data[1]);
+    words_in_line       = in->width / pixels_per_word;
+    leftover_pixels     = in->width % pixels_per_word;
+    rows_in_plane       = in->height / 2;
+    for(uint16_t h = 0; h < rows_in_plane; h++) {
+        u_buffer                = (uint16_t*)((uint8_t*)in->data[1] + (h * in->linesize[1]));
+        v_buffer                = (uint16_t*)((uint8_t*)in->data[2] + (h * in->linesize[2]));
+        for(uint16_t w = 0; w < words_in_line; w++) {
+            uv_10b_seg_to_xv15_wrd(pixels_per_word, &u_buffer, &v_buffer, &current_buffer);
+        }
+        if(leftover_pixels) {
+            uv_10b_seg_to_xv15_wrd(leftover_pixels, &u_buffer, &v_buffer,
+                                    &current_buffer);
+        }
+    }
+    return 0;
+}
+#endif
+
+// #if CONFIG_LIBXMA2API
+//     if ((cur_pic->width == out_buf->width) &&
+//         (cur_pic->height == out_buf->height) &&
+//         (!scale->out_color_matrix) &&
+//         (scale->in_range == scale->out_range)) {
+//         if ((cur_pic->format == AV_PIX_FMT_XV15) &&
+//             (out_buf->format == AV_PIX_FMT_YUV420P10LE)) {
+//             return conv_xv15_to_yuv420p10le(cur_pic, out_buf);
+//         } else if ((cur_pic->format == AV_PIX_FMT_YUV420P10LE) &&
+//             (out_buf->format == AV_PIX_FMT_XV15)) {
+//             out_buf->linesize[0] = ((cur_pic->width + 2) / 3) * 4;
+//             out_buf->linesize[1] = out_buf->linesize[0];
+//             return conv_yuv420p10le_to_xv15(cur_pic, out_buf);
+//         }
+//     }
+//     if(cur_pic->format == AV_PIX_FMT_XV15) {
+//         if(scale->temp_frame[0] == NULL) {
+//             ret = alloc_temp_frame(cur_pic, AV_PIX_FMT_YUV420P10LE, &scale->temp_frame[0]);
+//             if (ret < 0)
+//                 return ret;
+//         }
+//         ret = frame_copy_props(scale->temp_frame[0], cur_pic, 0);
+//         if (ret < 0)
+//             return ret;
+//         scale->temp_frame[0]->extended_data = scale->temp_frame[0]->data;
+
+//         conv_xv15_to_yuv420p10le(cur_pic, scale->temp_frame[0]);
+
+//         temp = scale->temp_frame[0];
+//         scale->temp_frame[0] = cur_pic;
+//         cur_pic = temp;
+//     }
+//     if(out_buf->format == AV_PIX_FMT_XV15) {
+//         if(scale->temp_frame[1] == NULL) {
+//             ret = alloc_temp_frame(out_buf, AV_PIX_FMT_YUV422P10LE, &scale->temp_frame[1]);
+//             if (ret < 0)
+//                 return ret;
+//         }
+//         scale->temp_frame[1]->extended_data = scale->temp_frame[1]->data;
+
+//         temp = scale->temp_frame[1];
+//         scale->temp_frame[1] = out_buf;
+//         out_buf = temp;
+//     }
+//     #endif
 
 static void frame_offset(AVFrame *frame, int dir, int is_pal)
 {
@@ -671,6 +1031,26 @@ static int scale_field(ScaleContext *scale, AVFrame *dst, AVFrame *src,
         frame_offset(dst, -1, scale->output_is_pal);
     }
 
+    #if CONFIG_LIBXMA2API
+    if(scale->temp_frame[0]) {
+        temp = scale->temp_frame[0];
+        scale->temp_frame[0] = cur_pic;
+        cur_pic = temp;
+    }
+    if(scale->temp_frame[1]) {
+        ret = conv_yuv420p10le_to_xv15(out_buf, scale->temp_frame[1]);
+        if (ret < 0)
+            return ret;
+        ret = frame_copy_props(out_buf, scale->temp_frame[1], 0);
+        if (ret < 0)
+            return ret;
+
+        temp = scale->temp_frame[1];
+        scale->temp_frame[1] = out_buf;
+        out_buf = temp;
+    }
+    #endif
+
     return 0;
 }
 
@@ -718,9 +1098,9 @@ static int scale_frame(AVFilterLink *link, AVFrame *in, AVFrame **frame_out)
             goto scale;
 
         if (scale->eval_mode == EVAL_MODE_INIT) {
-            snprintf(buf, sizeof(buf) - 1, "%d", scale->w);
+            snprintf(buf, sizeof(buf) - 1, "%d", outlink->w);
             av_opt_set(scale, "w", buf, 0);
-            snprintf(buf, sizeof(buf) - 1, "%d", scale->h);
+            snprintf(buf, sizeof(buf) - 1, "%d", outlink->h);
             av_opt_set(scale, "h", buf, 0);
 
             ret = scale_parse_expr(ctx, NULL, &scale->w_pexpr, "width", scale->w_expr);

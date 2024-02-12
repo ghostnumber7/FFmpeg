@@ -57,6 +57,10 @@ void ff_rtp_send_raw_rfc4175(AVFormatContext *s1, const uint8_t *buf, int size, 
             yinc = 1 << interlaced;
             pgroup = 3;
             break;
+        case AV_PIX_FMT_NV12:
+            pgroup = 6;
+            xinc = yinc = 2;
+            break;
         default:
             return;
     }

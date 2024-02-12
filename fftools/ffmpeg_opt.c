@@ -4035,6 +4035,11 @@ const OptionDef options[] = {
         "set QSV hardware device (DirectX adapter index, DRM path or X11 display name)", "device"},
 #endif
 
+#if CONFIG_LIBXMA2API
+    { "xlnx_hwdev", HAS_ARG | OPT_INT | OPT_EXPERT, { .func_arg  = opt_xlnx_hwdev },
+       "set Xilinx device id to be used", "device" },
+#endif
+
     { "init_hw_device", HAS_ARG | OPT_EXPERT, { .func_arg = opt_init_hw_device },
         "initialise hardware device", "args" },
     { "filter_hw_device", HAS_ARG | OPT_EXPERT, { .func_arg = opt_filter_hw_device },

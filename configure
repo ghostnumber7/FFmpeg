@@ -301,6 +301,9 @@ External library support:
                            native MPEG-4/Xvid encoder exists [no]
   --enable-libxml2         enable XML parsing using the C library libxml2, needed
                            for dash and imf demuxing support [no]
+  --enable-libxma2api      enable Xilinx Media Accelerator API [no]
+  --enable-libxrm          enable Xilinx Resource Management API [no]
+  --enable-libxvbm         enable Xilinx video buffer management API [no]
   --enable-libzimg         enable z.lib, needed for zscale filter [no]
   --enable-libzmq          enable message passing via libzmq [no]
   --enable-libzvbi         enable teletext support via libzvbi [no]
@@ -1805,11 +1808,18 @@ EXTERNAL_LIBRARY_GPLV3_LIST="
     libsmbclient
 "
 
+EXTERNAL_LIBRARY_XILINX_LIST="
+    libxma2api
+    libxrm
+    libxvbm
+"
+
 EXTERNAL_LIBRARY_LIST="
     $EXTERNAL_LIBRARY_GPL_LIST
     $EXTERNAL_LIBRARY_NONFREE_LIST
     $EXTERNAL_LIBRARY_VERSION3_LIST
     $EXTERNAL_LIBRARY_GPLV3_LIST
+    $EXTERNAL_LIBRARY_XILINX_LIST
     chromaprint
     gcrypt
     gnutls
@@ -2997,11 +3007,12 @@ wmv3image_decoder_select="wmv3_decoder"
 xma1_decoder_select="wmapro_decoder"
 xma2_decoder_select="wmapro_decoder"
 ylc_decoder_select="bswapdsp"
-zerocodec_decoder_select="inflate_wrapper"
-zlib_decoder_select="inflate_wrapper"
-zlib_encoder_select="deflate_wrapper"
-zmbv_decoder_select="inflate_wrapper"
-zmbv_encoder_select="deflate_wrapper"
+h264_vcu_mpsoc_decoder_deps="libxma2api xvbm libxrm"
+hevc_vcu_mpsoc_decoder_deps="libxma2api xvbm libxrm"
+multiscale_xma_filter_deps="libxma2api xvbm libxrm"
+h264_vcu_mpsoc_encoder_deps="libxma2api xvbm libxrm"
+hevc_vcu_mpsoc_encoder_deps="libxma2api xvbm libxrm"
+xvbm_convert_filter_deps="libxma2api xvbm"
 
 # hardware accelerators
 crystalhd_deps="libcrystalhd_libcrystalhd_if_h"
@@ -6675,6 +6686,10 @@ enabled libx265           && require_pkg_config libx265 x265 x265.h x265_api_get
                              require_cpp_condition libx265 x265.h "X265_BUILD >= 70"
 enabled libxavs           && require libxavs "stdint.h xavs.h" xavs_encoder_encode "-lxavs $pthreads_extralibs $libm_extralibs"
 enabled libxavs2          && require_pkg_config libxavs2 "xavs2 >= 1.3.0" "stdint.h xavs2.h" xavs2_api_get
+enabled libxma2api         && { require_pkg_config libxma2api libxma2api xma.h xma_initialize &&
+                                warn "XILINX: Adding libxma2api to ffmpeg"; }
+enabled libxrm            && require_pkg_config libxrm "libxrm >= 1.3.23" xrm.h xrmCreateContext
+enabled libxvbm           && require_pkg_config xvbm xvbm xvbm.h xvbm_buffer_refcnt_inc
 enabled libxvid           && require libxvid xvid.h xvid_global -lxvidcore
 enabled libzimg           && require_pkg_config libzimg "zimg >= 2.7.0" zimg.h zimg_get_api_version
 enabled libzmq            && require_pkg_config libzmq "libzmq >= 4.2.1" zmq.h zmq_ctx_new

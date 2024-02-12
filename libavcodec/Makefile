@@ -26,6 +26,7 @@ HEADERS = ac3_parser.h                                                  \
           videotoolbox.h                                                \
           vorbis_parser.h                                               \
           xvmc.h                                                        \
+          xlnx_lookahead.h                                              \
 
 OBJS = ac3_parser.o                                                     \
        adts_parser.o                                                    \
@@ -397,6 +398,10 @@ OBJS-$(CONFIG_H264_QSV_ENCODER)        += qsvenc_h264.o
 OBJS-$(CONFIG_H264_RKMPP_DECODER)      += rkmppdec.o
 OBJS-$(CONFIG_H264_VAAPI_ENCODER)      += vaapi_encode_h264.o h264_levels.o
 OBJS-$(CONFIG_H264_VIDEOTOOLBOX_ENCODER) += videotoolboxenc.o
+OBJS-$(CONFIG_HEVC_VCU_MPSOC_ENCODER)  += xlnx_lookahead.o mpsoc_vcu_enc.o
+OBJS-$(CONFIG_H264_VCU_MPSOC_DECODER)  += mpsoc_vcu_dec.o
+OBJS-$(CONFIG_HEVC_VCU_MPSOC_DECODER)  += mpsoc_vcu_dec.o
+OBJS-$(CONFIG_H264_VCU_MPSOC_ENCODER)  += xlnx_lookahead.o mpsoc_vcu_enc.o
 OBJS-$(CONFIG_H264_V4L2M2M_DECODER)    += v4l2_m2m_dec.o
 OBJS-$(CONFIG_H264_V4L2M2M_ENCODER)    += v4l2_m2m_enc.o
 OBJS-$(CONFIG_HAP_DECODER)             += hapdec.o hap.o
