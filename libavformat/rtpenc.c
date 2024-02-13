@@ -640,8 +640,7 @@ static int rtp_write_packet(AVFormatContext *s1, AVPacket *pkt)
         /* Intentional fallthrough */
     default:
         /* better than nothing : send the codec raw data */
-        ff_rtp_send_raw_rfc4175 (s1, pkt->data, size);
-        // rtp_send_raw(s1, pkt->data, size);
+        rtp_send_raw(s1, pkt->data, size);
         break;
     }
     return 0;

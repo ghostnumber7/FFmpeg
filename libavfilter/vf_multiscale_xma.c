@@ -416,7 +416,7 @@ static av_cold int multiscale_xma_init(AVFilterContext *ctx)
             return AVERROR(ENOMEM);
         }
         pad.config_props = output_config_props;
-        ff_insert_outpad(ctx, i, &pad);
+        ff_append_outpad(ctx, &pad);
     }
     return 0;
 }
@@ -1057,18 +1057,17 @@ static const AVFilterPad avfilter_vf_multiscale_xma_inputs[] = {
         .filter_frame = multiscale_xma_filter_frame,
         .config_props = multiscale_xma_config_props,
     },
-    { NULL }
 };
 
-AVFilter ff_vf_multiscale_xma = {
+const AVFilter ff_vf_multiscale_xma = {
     .name = "multiscale_xma",
     .description = NULL_IF_CONFIG_SMALL("Xilinx Multi Scaler (in ABR mode) using XMA APIs"),
     .priv_size = sizeof(MultiScalerContext),
     .priv_class = &multiscale_xma_class,
-    .query_formats = query_formats,
+    FILTER_QUERY_FUNC(query_formats),
     .init = multiscale_xma_init,
     .uninit = multiscale_xma_uninit,
-    .inputs = avfilter_vf_multiscale_xma_inputs,
+    FILTER_INPUTS(avfilter_vf_multiscale_xma_inputs),
     .outputs = NULL,
     .flags = AVFILTER_FLAG_DYNAMIC_OUTPUTS,
 };

@@ -383,6 +383,8 @@ static int xvbm_convert_filter_frame(AVFilterLink *link, AVFrame *in)
             return 0;
         }
         out = rspMsg.pFrame;
+
+        // av_frame_copy_props(outlink, out);
     } else {
         //clone input frame to output
         out = in;
@@ -538,8 +540,7 @@ static const AVFilterPad inputs[] = {
         .name         = "default",
         .type         = AVMEDIA_TYPE_VIDEO,
         .filter_frame = xvbm_convert_filter_frame,
-    },
-    { NULL }
+    }
 };
 
 static const AVFilterPad outputs[] = {
@@ -547,17 +548,16 @@ static const AVFilterPad outputs[] = {
         .name         = "default",
         .type         = AVMEDIA_TYPE_VIDEO,
         .config_props = config_props,
-    },
-    { NULL }
+    }
 };
 
 AVFilter ff_vf_xvbm_convert = {
     .name            = "xvbm_convert",
     .description     = NULL_IF_CONFIG_SMALL("convert xvbm frame to av frame"),
     .priv_size       = sizeof(XvbmConvertContext),
-    .query_formats   = xvbm_convert_query_formats,
+    FILTER_QUERY_FUNC(xvbm_convert_query_formats),
     .init            = xvbm_conv_init,
     .uninit          = xvbm_conv_uninit,
-    .inputs          = inputs,
-    .outputs         = outputs,
+    FILTER_INPUTS(inputs),
+    FILTER_OUTPUTS(outputs),
 };

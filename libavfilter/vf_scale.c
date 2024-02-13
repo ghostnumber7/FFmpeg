@@ -936,53 +936,170 @@ static int32_t conv_yuv420p10le_to_xv15(const AVFrame* in, AVFrame* out)
     }
     return 0;
 }
+
+
+static int alloc_temp_frame(AVFrame *pic, int format, AVFrame **frame)
+{
+    ptrdiff_t linesizes[4];
+    size_t sizes[4];
+    int i, ret = 0, padded_height;
+
+    *frame = av_frame_alloc();
+    (*frame)->format = format;
+    (*frame)->width = pic->width;
+    (*frame)->height = pic->height;
+    for(i=1; i<=32; i+=i) {
+        ret = av_image_fill_linesizes((*frame)->linesize, format,
+                                      FFALIGN(pic->width, i));
+        if (ret < 0)
+            return ret;
+        if (!((*frame)->linesize[0] & 31))
+            break;
+    }
+
+    for(i = 0; i < 4 && (*frame)->linesize[i]; i++)
+        (*frame)->linesize[i] = FFALIGN((*frame)->linesize[i], 32);
+
+    for(i = 0; i < 4; i++)
+        linesizes[i] = (*frame)->linesize[i];
+
+    padded_height = FFALIGN((*frame)->height, 32);
+    if ((ret = av_image_fill_plane_sizes(sizes, format,
+                                         padded_height, linesizes)) < 0)
+        return ret;
+
+    for(i = 0; i < 4; i++) {
+        if(sizes[i] > INT_MAX - 32)
+            return AVERROR(EINVAL);
+        if (sizes[i] > 0) {
+            (*frame)->buf[i] = av_buffer_alloc(sizes[i]);
+            if (!(*frame)->buf[i])
+                return AVERROR(ENOMEM);
+            (*frame)->data[i] = (*frame)->buf[i]->data;
+        } else {
+            (*frame)->buf[i] = NULL;
+            (*frame)->data[i] = NULL;
+        }
+    }
+
+    return ret;
+}
+
+
+static void free_side_data(AVFrameSideData **ptr_sd)
+{
+    AVFrameSideData *sd = *ptr_sd;
+
+    av_buffer_unref(&sd->buf);
+    av_dict_free(&sd->metadata);
+    av_freep(ptr_sd);
+}
+
+static void wipe_side_data(AVFrame *frame)
+{
+    int i;
+
+    for (i = 0; i < frame->nb_side_data; i++) {
+        free_side_data(&frame->side_data[i]);
+    }
+    frame->nb_side_data = 0;
+
+    av_freep(&frame->side_data);
+}
+
+static int frame_copy_props(AVFrame *dst, const AVFrame *src, int force_copy)
+{
+    int ret, i;
+
+    dst->key_frame              = src->key_frame;
+    dst->pict_type              = src->pict_type;
+    dst->sample_aspect_ratio    = src->sample_aspect_ratio;
+    dst->crop_top               = src->crop_top;
+    dst->crop_bottom            = src->crop_bottom;
+    dst->crop_left              = src->crop_left;
+    dst->crop_right             = src->crop_right;
+    dst->pts                    = src->pts;
+    dst->repeat_pict            = src->repeat_pict;
+    dst->interlaced_frame       = src->interlaced_frame;
+    dst->top_field_first        = src->top_field_first;
+    dst->palette_has_changed    = src->palette_has_changed;
+    dst->sample_rate            = src->sample_rate;
+    dst->opaque                 = src->opaque;
+#if FF_API_PKT_PTS
+FF_DISABLE_DEPRECATION_WARNINGS
+    dst->pkt_pts                = src->pkt_pts;
+FF_ENABLE_DEPRECATION_WARNINGS
+#endif
+    dst->pkt_dts                = src->pkt_dts;
+    dst->pkt_pos                = src->pkt_pos;
+    dst->pkt_size               = src->pkt_size;
+    dst->pkt_duration           = src->pkt_duration;
+    dst->reordered_opaque       = src->reordered_opaque;
+    dst->quality                = src->quality;
+    dst->best_effort_timestamp  = src->best_effort_timestamp;
+    dst->coded_picture_number   = src->coded_picture_number;
+    dst->display_picture_number = src->display_picture_number;
+    dst->flags                  = src->flags;
+    dst->decode_error_flags     = src->decode_error_flags;
+    dst->color_primaries        = src->color_primaries;
+    dst->color_trc              = src->color_trc;
+    dst->colorspace             = src->colorspace;
+    dst->color_range            = src->color_range;
+    dst->chroma_location        = src->chroma_location;
+
+    av_dict_copy(&dst->metadata, src->metadata, 0);
+
+#if FF_API_ERROR_FRAME
+FF_DISABLE_DEPRECATION_WARNINGS
+    memcpy(dst->error, src->error, sizeof(dst->error));
+FF_ENABLE_DEPRECATION_WARNINGS
 #endif
 
-// #if CONFIG_LIBXMA2API
-//     if ((cur_pic->width == out_buf->width) &&
-//         (cur_pic->height == out_buf->height) &&
-//         (!scale->out_color_matrix) &&
-//         (scale->in_range == scale->out_range)) {
-//         if ((cur_pic->format == AV_PIX_FMT_XV15) &&
-//             (out_buf->format == AV_PIX_FMT_YUV420P10LE)) {
-//             return conv_xv15_to_yuv420p10le(cur_pic, out_buf);
-//         } else if ((cur_pic->format == AV_PIX_FMT_YUV420P10LE) &&
-//             (out_buf->format == AV_PIX_FMT_XV15)) {
-//             out_buf->linesize[0] = ((cur_pic->width + 2) / 3) * 4;
-//             out_buf->linesize[1] = out_buf->linesize[0];
-//             return conv_yuv420p10le_to_xv15(cur_pic, out_buf);
-//         }
-//     }
-//     if(cur_pic->format == AV_PIX_FMT_XV15) {
-//         if(scale->temp_frame[0] == NULL) {
-//             ret = alloc_temp_frame(cur_pic, AV_PIX_FMT_YUV420P10LE, &scale->temp_frame[0]);
-//             if (ret < 0)
-//                 return ret;
-//         }
-//         ret = frame_copy_props(scale->temp_frame[0], cur_pic, 0);
-//         if (ret < 0)
-//             return ret;
-//         scale->temp_frame[0]->extended_data = scale->temp_frame[0]->data;
+    for (i = 0; i < src->nb_side_data; i++) {
+        const AVFrameSideData *sd_src = src->side_data[i];
+        AVFrameSideData *sd_dst;
+        if (   sd_src->type == AV_FRAME_DATA_PANSCAN
+            && (src->width != dst->width || src->height != dst->height))
+            continue;
+        if (force_copy) {
+            sd_dst = av_frame_new_side_data(dst, sd_src->type,
+                                            sd_src->size);
+            if (!sd_dst) {
+                wipe_side_data(dst);
+                return AVERROR(ENOMEM);
+            }
+            memcpy(sd_dst->data, sd_src->data, sd_src->size);
+        } else {
+            AVBufferRef *ref = av_buffer_ref(sd_src->buf);
+            sd_dst = av_frame_new_side_data_from_buf(dst, sd_src->type, ref);
+            if (!sd_dst) {
+                av_buffer_unref(&ref);
+                wipe_side_data(dst);
+                return AVERROR(ENOMEM);
+            }
+        }
+        av_dict_copy(&sd_dst->metadata, sd_src->metadata, 0);
+    }
 
-//         conv_xv15_to_yuv420p10le(cur_pic, scale->temp_frame[0]);
+#if FF_API_FRAME_QP
+FF_DISABLE_DEPRECATION_WARNINGS
+    dst->qscale_table = NULL;
+    dst->qstride      = 0;
+    dst->qscale_type  = 0;
+    av_buffer_replace(&dst->qp_table_buf, src->qp_table_buf);
+    if (dst->qp_table_buf) {
+        dst->qscale_table = dst->qp_table_buf->data;
+        dst->qstride      = src->qstride;
+        dst->qscale_type  = src->qscale_type;
+    }
+FF_ENABLE_DEPRECATION_WARNINGS
+#endif
 
-//         temp = scale->temp_frame[0];
-//         scale->temp_frame[0] = cur_pic;
-//         cur_pic = temp;
-//     }
-//     if(out_buf->format == AV_PIX_FMT_XV15) {
-//         if(scale->temp_frame[1] == NULL) {
-//             ret = alloc_temp_frame(out_buf, AV_PIX_FMT_YUV422P10LE, &scale->temp_frame[1]);
-//             if (ret < 0)
-//                 return ret;
-//         }
-//         scale->temp_frame[1]->extended_data = scale->temp_frame[1]->data;
-
-//         temp = scale->temp_frame[1];
-//         scale->temp_frame[1] = out_buf;
-//         out_buf = temp;
-//     }
-//     #endif
+    ret = av_buffer_replace(&dst->opaque_ref, src->opaque_ref);
+    ret |= av_buffer_replace(&dst->private_ref, src->private_ref);
+    return ret;
+}
+#endif
 
 static void frame_offset(AVFrame *frame, int dir, int is_pal)
 {
@@ -999,6 +1116,54 @@ static int scale_field(ScaleContext *scale, AVFrame *dst, AVFrame *src,
     int orig_h_src = src->height;
     int orig_h_dst = dst->height;
     int ret;
+
+    AVFrame* temp;
+
+    // #if CONFIG_LIBXMA2API
+    // if ((src->width == dst->width) &&
+    //     (src->height == dst->height) &&
+    //     (!scale->out_color_matrix) &&
+    //     (scale->in_range == scale->out_range)) {
+    //     if ((src->format == AV_PIX_FMT_XV15) &&
+    //         (dst->format == AV_PIX_FMT_YUV420P10LE)) {
+    //         return conv_xv15_to_yuv420p10le(src, dst);
+    //     } else if ((src->format == AV_PIX_FMT_YUV420P10LE) &&
+    //         (dst->format == AV_PIX_FMT_XV15)) {
+    //         dst->linesize[0] = ((src->width + 2) / 3) * 4;
+    //         dst->linesize[1] = dst->linesize[0];
+    //         return conv_yuv420p10le_to_xv15(src, dst);
+    //     }
+    // }
+    // if(src->format == AV_PIX_FMT_XV15) {
+    //     if(scale->temp_frame[0] == NULL) {
+    //         ret = alloc_temp_frame(src, AV_PIX_FMT_YUV420P10LE, &scale->temp_frame[0]);
+    //         if (ret < 0)
+    //             return ret;
+    //     }
+    //     ret = frame_copy_props(scale->temp_frame[0], src, 0);
+    //     if (ret < 0)
+    //         return ret;
+    //     scale->temp_frame[0]->extended_data = scale->temp_frame[0]->data;
+
+    //     conv_xv15_to_yuv420p10le(src, scale->temp_frame[0]);
+
+    //     temp = scale->temp_frame[0];
+    //     scale->temp_frame[0] = src;
+    //     src = temp;
+    // }
+    // if(dst->format == AV_PIX_FMT_XV15) {
+    //     if(scale->temp_frame[1] == NULL) {
+    //         ret = alloc_temp_frame(dst, AV_PIX_FMT_YUV422P10LE, &scale->temp_frame[1]);
+    //         if (ret < 0)
+    //             return ret;
+    //     }
+    //     scale->temp_frame[1]->extended_data = scale->temp_frame[1]->data;
+
+    //     temp = scale->temp_frame[1];
+    //     scale->temp_frame[1] = dst;
+    //     dst = temp;
+    // }
+    // #endif
 
     // offset the data pointers for the bottom field
     if (field) {
@@ -1031,25 +1196,25 @@ static int scale_field(ScaleContext *scale, AVFrame *dst, AVFrame *src,
         frame_offset(dst, -1, scale->output_is_pal);
     }
 
-    #if CONFIG_LIBXMA2API
-    if(scale->temp_frame[0]) {
-        temp = scale->temp_frame[0];
-        scale->temp_frame[0] = cur_pic;
-        cur_pic = temp;
-    }
-    if(scale->temp_frame[1]) {
-        ret = conv_yuv420p10le_to_xv15(out_buf, scale->temp_frame[1]);
-        if (ret < 0)
-            return ret;
-        ret = frame_copy_props(out_buf, scale->temp_frame[1], 0);
-        if (ret < 0)
-            return ret;
+    // #if CONFIG_LIBXMA2API
+    // if(scale->temp_frame[0]) {
+    //     temp = scale->temp_frame[0];
+    //     scale->temp_frame[0] = src;
+    //     src = temp;
+    // }
+    // if(scale->temp_frame[1]) {
+    //     ret = conv_yuv420p10le_to_xv15(dst, scale->temp_frame[1]);
+    //     if (ret < 0)
+    //         return ret;
+    //     ret = frame_copy_props(dst, scale->temp_frame[1], 0);
+    //     if (ret < 0)
+    //         return ret;
 
-        temp = scale->temp_frame[1];
-        scale->temp_frame[1] = out_buf;
-        out_buf = temp;
-    }
-    #endif
+    //     temp = scale->temp_frame[1];
+    //     scale->temp_frame[1] = dst;
+    //     dst = temp;
+    // }
+    // #endif
 
     return 0;
 }
@@ -1221,6 +1386,7 @@ scale:
         if (ret >= 0)
             ret = scale_field(scale, out, in, 1);
     } else {
+        // TODO: Esto no funciona ... hay que hacer algo con el pix_fmpt
         ret = sws_scale_frame(scale->sws, out, in);
     }
 

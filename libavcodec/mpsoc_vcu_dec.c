@@ -32,6 +32,7 @@
 #include "libavcodec/mpsoc_vcu_hdr10.h"
 #include "avcodec.h"
 #include "internal.h"
+#include "codec_internal.h"
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1087,20 +1088,20 @@ static const AVClass mpsoc_vcu_h264_class = {
     .version       =    LIBAVUTIL_VERSION_INT,
 };
 
-AVCodec ff_h264_vcu_mpsoc_decoder = {
-    .name                =    "mpsoc_vcu_h264",
-    .long_name           =    NULL_IF_CONFIG_SMALL("MPSOC H.264 Decoder"),
-    .type                =    AVMEDIA_TYPE_VIDEO,
-    .id                  =    AV_CODEC_ID_H264,
+const FFCodec ff_h264_vcu_mpsoc_decoder = {
+    .p.name                =    "mpsoc_vcu_h264",
+    .p.long_name           =    NULL_IF_CONFIG_SMALL("MPSOC H.264 Decoder"),
+    .p.type                =    AVMEDIA_TYPE_VIDEO,
+    .p.id                  =    AV_CODEC_ID_H264,
     .init                =    mpsoc_vcu_decode_init,
-    .decode              =    mpsoc_vcu_decode,
+    FF_CODEC_DECODE_CB(mpsoc_vcu_decode),
     .flush               =    mpsoc_vcu_flush,
     .bsfs                =    "h264_mp4toannexb",
     .close               =    mpsoc_vcu_decode_close,
     .priv_data_size      =    sizeof(mpsoc_vcu_dec_ctx),
-    .priv_class          =    &mpsoc_vcu_h264_class,
-    .capabilities        =    AV_CODEC_CAP_DELAY | AV_CODEC_CAP_AVOID_PROBING,
-    .pix_fmts            =    (const enum AVPixelFormat[]) { AV_PIX_FMT_XVBM_8,
+    .p.priv_class          =    &mpsoc_vcu_h264_class,
+    .p.capabilities        =    AV_CODEC_CAP_DELAY | AV_CODEC_CAP_AVOID_PROBING,
+    .p.pix_fmts            =    (const enum AVPixelFormat[]) { AV_PIX_FMT_XVBM_8,
                                                              AV_PIX_FMT_XVBM_10,
                                                              AV_PIX_FMT_NONE
                                                            },
@@ -1114,20 +1115,20 @@ static const AVClass mpsoc_vcu_hevc_class = {
     .version       =    LIBAVUTIL_VERSION_INT,
 };
 
-AVCodec ff_hevc_vcu_mpsoc_decoder = {
-    .name                =    "mpsoc_vcu_hevc",
-    .long_name           =    NULL_IF_CONFIG_SMALL("MPSOC HEVC Decoder"),
-    .type                =    AVMEDIA_TYPE_VIDEO,
-    .id                  =    AV_CODEC_ID_HEVC,
+const FFCodec ff_hevc_vcu_mpsoc_decoder = {
+    .p.name                =    "mpsoc_vcu_hevc",
+    .p.long_name           =    NULL_IF_CONFIG_SMALL("MPSOC HEVC Decoder"),
+    .p.type                =    AVMEDIA_TYPE_VIDEO,
+    .p.id                  =    AV_CODEC_ID_HEVC,
     .init                =    mpsoc_vcu_decode_init,
-    .decode              =    mpsoc_vcu_decode,
+    FF_CODEC_DECODE_CB(mpsoc_vcu_decode),
     .flush               =    mpsoc_vcu_flush,
     .bsfs                =    "hevc_mp4toannexb",
     .close               =    mpsoc_vcu_decode_close,
     .priv_data_size      =    sizeof(mpsoc_vcu_dec_ctx),
-    .priv_class          =    &mpsoc_vcu_hevc_class,
-    .capabilities        =    AV_CODEC_CAP_DELAY | AV_CODEC_CAP_AVOID_PROBING,
-    .pix_fmts            =    (const enum AVPixelFormat[]) { AV_PIX_FMT_XVBM_8,
+    .p.priv_class          =    &mpsoc_vcu_hevc_class,
+    .p.capabilities        =    AV_CODEC_CAP_DELAY | AV_CODEC_CAP_AVOID_PROBING,
+    .p.pix_fmts            =    (const enum AVPixelFormat[]) { AV_PIX_FMT_XVBM_8,
                                                              AV_PIX_FMT_XVBM_10,
                                                              AV_PIX_FMT_NONE
                                                            },

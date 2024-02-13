@@ -3072,14 +3072,14 @@ static int init_output_stream_encode(OutputStream *ost, AVFrame *frame)
 
         ost->st->avg_frame_rate = ost->frame_rate;
 
-#if CONFIG_LIBXMA2API
-        if (dec_ctx) {
-            enc_ctx->bits_per_raw_sample = av_pix_fmt_desc_get(dec_ctx->pix_fmt)->comp[0].depth;
-        }
-        else {
-            enc_ctx->bits_per_raw_sample = frame_bits_per_raw_sample;
-        }
-#endif
+// #if CONFIG_LIBXMA2API
+//         if (dec_ctx) {
+//             enc_ctx->bits_per_raw_sample = av_pix_fmt_desc_get(dec_ctx->pix_fmt)->comp[0].depth;
+//         }
+//         else {
+//             enc_ctx->bits_per_raw_sample = frame_bits_per_raw_sample;
+//         }
+// #endif
 
         // Field order: autodetection
         if (frame) {

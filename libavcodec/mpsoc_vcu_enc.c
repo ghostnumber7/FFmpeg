@@ -28,7 +28,9 @@
 #include "libavutil/fifo.h"
 #include "libavcodec/mpsoc_vcu_hdr10.h"
 #include "avcodec.h"
+#include "encode.h"
 #include "internal.h"
+#include "codec_internal.h"
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1672,7 +1674,7 @@ static int mpsoc_vcu_enc_flush_frame(AVCodecContext *avctx, AVPacket *pkt, const
     // Allocate ouput data packet
     if (pkt->data == NULL) {
         // min_size should be less than half of out_packet_size, for re-use of buffers
-        ret = ff_alloc_packet2(avctx, pkt, ctx->out_packet_size, ctx->out_packet_size/2 -1);
+        ret = ff_get_encode_buffer(avctx, pkt, ctx->out_packet_size, ctx->out_packet_size/2 -1);
         if (ret < 0) {
             av_log(NULL, AV_LOG_ERROR, "ERROR: Failed to allocate ff_packet\n");
             return ret;
@@ -1818,7 +1820,7 @@ static int mpsoc_vcu_encode_frame(AVCodecContext *avctx, AVPacket *pkt, const AV
                 // Allocate ouput data packet
                 if (pkt->data == NULL) {
                     // min_size should be less than half of out_packet_size, for re-use of buffers
-                    ret = ff_alloc_packet2(avctx, pkt, ctx->out_packet_size, ctx->out_packet_size/2 -1);
+                    ret = ff_get_encode_buffer(avctx, pkt, ctx->out_packet_size, ctx->out_packet_size/2 -1);
                     if (ret < 0) {
                         av_log(NULL, AV_LOG_ERROR, "ERROR: Failed to allocate ff_packet\n");
                         return ret;
@@ -1912,7 +1914,7 @@ end:
     return 0;
 }
 
-static const AVCodecDefault mpsoc_defaults[] = {
+static const FFCodecDefault mpsoc_defaults[] = {
     { "b", "5M" },
     { "g", "120" },
     { NULL },
@@ -1925,23 +1927,23 @@ static const AVClass mpsoc_h264_class = {
     .version = LIBAVUTIL_VERSION_INT,
 };
 
-AVCodec ff_h264_vcu_mpsoc_encoder = {
-    .name = "mpsoc_vcu_h264",
-    .long_name = NULL_IF_CONFIG_SMALL("MPSOC H.264 Encoder"),
-    .type = AVMEDIA_TYPE_VIDEO,
-    .id = AV_CODEC_ID_H264,
+const FFCodec ff_h264_vcu_mpsoc_encoder = {
+    .p.name = "mpsoc_vcu_h264",
+    .p.long_name = NULL_IF_CONFIG_SMALL("MPSOC H.264 Encoder"),
+    .p.type = AVMEDIA_TYPE_VIDEO,
+    .p.id = AV_CODEC_ID_H264,
     .init = mpsoc_vcu_encode_init,
-    .encode2 = mpsoc_vcu_encode_frame,
+    FF_CODEC_ENCODE_CB(mpsoc_vcu_encode_frame),
     .close = mpsoc_vcu_encode_close,
     .priv_data_size = sizeof(mpsoc_vcu_enc_ctx),
-    .priv_class = &mpsoc_h264_class,
+    .p.priv_class = &mpsoc_h264_class,
     .defaults = mpsoc_defaults,
-    .pix_fmts = (const enum AVPixelFormat[]) { AV_PIX_FMT_XVBM_8,
+    .p.pix_fmts = (const enum AVPixelFormat[]) { AV_PIX_FMT_XVBM_8,
                                                AV_PIX_FMT_XVBM_10,
                                                AV_PIX_FMT_NV12,
                                                AV_PIX_FMT_XV15,
                                                AV_PIX_FMT_NONE },
-    .capabilities = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_AUTO_THREADS,
+    .p.capabilities = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_AUTO_THREADS,
 };
 
 static const AVClass mpsoc_hevc_vcu_class = {
@@ -1951,21 +1953,21 @@ static const AVClass mpsoc_hevc_vcu_class = {
     .version = LIBAVUTIL_VERSION_INT,
 };
 
-AVCodec ff_hevc_vcu_mpsoc_encoder = {
-    .name = "mpsoc_vcu_hevc",
-    .long_name = NULL_IF_CONFIG_SMALL("MPSOC VCU HEVC Encoder"),
-    .type  = AVMEDIA_TYPE_VIDEO,
-    .id = AV_CODEC_ID_HEVC,
+const FFCodec ff_hevc_vcu_mpsoc_encoder = {
+    .p.name = "mpsoc_vcu_hevc",
+    .p.long_name = NULL_IF_CONFIG_SMALL("MPSOC VCU HEVC Encoder"),
+    .p.type  = AVMEDIA_TYPE_VIDEO,
+    .p.id = AV_CODEC_ID_HEVC,
     .init = mpsoc_vcu_encode_init,
-    .encode2 = mpsoc_vcu_encode_frame,
+    FF_CODEC_ENCODE_CB(mpsoc_vcu_encode_frame),
     .close = mpsoc_vcu_encode_close,
     .priv_data_size = sizeof(mpsoc_vcu_enc_ctx),
-    .priv_class = &mpsoc_hevc_vcu_class,
+    .p.priv_class = &mpsoc_hevc_vcu_class,
     .defaults = mpsoc_defaults,
-    .pix_fmts = (const enum AVPixelFormat[]) { AV_PIX_FMT_XVBM_8,
+    .p.pix_fmts = (const enum AVPixelFormat[]) { AV_PIX_FMT_XVBM_8,
                                                AV_PIX_FMT_XVBM_10,
                                                AV_PIX_FMT_NV12,
                                                AV_PIX_FMT_XV15,
                                                AV_PIX_FMT_NONE },
-    .capabilities = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_AUTO_THREADS | AV_CODEC_CAP_AVOID_PROBING,
+    .p.capabilities = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_AUTO_THREADS | AV_CODEC_CAP_AVOID_PROBING,
 };
