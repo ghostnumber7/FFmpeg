@@ -985,120 +985,6 @@ static int alloc_temp_frame(AVFrame *pic, int format, AVFrame **frame)
     return ret;
 }
 
-
-static void free_side_data(AVFrameSideData **ptr_sd)
-{
-    AVFrameSideData *sd = *ptr_sd;
-
-    av_buffer_unref(&sd->buf);
-    av_dict_free(&sd->metadata);
-    av_freep(ptr_sd);
-}
-
-static void wipe_side_data(AVFrame *frame)
-{
-    int i;
-
-    for (i = 0; i < frame->nb_side_data; i++) {
-        free_side_data(&frame->side_data[i]);
-    }
-    frame->nb_side_data = 0;
-
-    av_freep(&frame->side_data);
-}
-
-static int frame_copy_props(AVFrame *dst, const AVFrame *src, int force_copy)
-{
-    int ret, i;
-
-    dst->key_frame              = src->key_frame;
-    dst->pict_type              = src->pict_type;
-    dst->sample_aspect_ratio    = src->sample_aspect_ratio;
-    dst->crop_top               = src->crop_top;
-    dst->crop_bottom            = src->crop_bottom;
-    dst->crop_left              = src->crop_left;
-    dst->crop_right             = src->crop_right;
-    dst->pts                    = src->pts;
-    dst->repeat_pict            = src->repeat_pict;
-    dst->interlaced_frame       = src->interlaced_frame;
-    dst->top_field_first        = src->top_field_first;
-    dst->palette_has_changed    = src->palette_has_changed;
-    dst->sample_rate            = src->sample_rate;
-    dst->opaque                 = src->opaque;
-#if FF_API_PKT_PTS
-FF_DISABLE_DEPRECATION_WARNINGS
-    dst->pkt_pts                = src->pkt_pts;
-FF_ENABLE_DEPRECATION_WARNINGS
-#endif
-    dst->pkt_dts                = src->pkt_dts;
-    dst->pkt_pos                = src->pkt_pos;
-    dst->pkt_size               = src->pkt_size;
-    dst->pkt_duration           = src->pkt_duration;
-    dst->reordered_opaque       = src->reordered_opaque;
-    dst->quality                = src->quality;
-    dst->best_effort_timestamp  = src->best_effort_timestamp;
-    dst->coded_picture_number   = src->coded_picture_number;
-    dst->display_picture_number = src->display_picture_number;
-    dst->flags                  = src->flags;
-    dst->decode_error_flags     = src->decode_error_flags;
-    dst->color_primaries        = src->color_primaries;
-    dst->color_trc              = src->color_trc;
-    dst->colorspace             = src->colorspace;
-    dst->color_range            = src->color_range;
-    dst->chroma_location        = src->chroma_location;
-
-    av_dict_copy(&dst->metadata, src->metadata, 0);
-
-#if FF_API_ERROR_FRAME
-FF_DISABLE_DEPRECATION_WARNINGS
-    memcpy(dst->error, src->error, sizeof(dst->error));
-FF_ENABLE_DEPRECATION_WARNINGS
-#endif
-
-    for (i = 0; i < src->nb_side_data; i++) {
-        const AVFrameSideData *sd_src = src->side_data[i];
-        AVFrameSideData *sd_dst;
-        if (   sd_src->type == AV_FRAME_DATA_PANSCAN
-            && (src->width != dst->width || src->height != dst->height))
-            continue;
-        if (force_copy) {
-            sd_dst = av_frame_new_side_data(dst, sd_src->type,
-                                            sd_src->size);
-            if (!sd_dst) {
-                wipe_side_data(dst);
-                return AVERROR(ENOMEM);
-            }
-            memcpy(sd_dst->data, sd_src->data, sd_src->size);
-        } else {
-            AVBufferRef *ref = av_buffer_ref(sd_src->buf);
-            sd_dst = av_frame_new_side_data_from_buf(dst, sd_src->type, ref);
-            if (!sd_dst) {
-                av_buffer_unref(&ref);
-                wipe_side_data(dst);
-                return AVERROR(ENOMEM);
-            }
-        }
-        av_dict_copy(&sd_dst->metadata, sd_src->metadata, 0);
-    }
-
-#if FF_API_FRAME_QP
-FF_DISABLE_DEPRECATION_WARNINGS
-    dst->qscale_table = NULL;
-    dst->qstride      = 0;
-    dst->qscale_type  = 0;
-    av_buffer_replace(&dst->qp_table_buf, src->qp_table_buf);
-    if (dst->qp_table_buf) {
-        dst->qscale_table = dst->qp_table_buf->data;
-        dst->qstride      = src->qstride;
-        dst->qscale_type  = src->qscale_type;
-    }
-FF_ENABLE_DEPRECATION_WARNINGS
-#endif
-
-    ret = av_buffer_replace(&dst->opaque_ref, src->opaque_ref);
-    ret |= av_buffer_replace(&dst->private_ref, src->private_ref);
-    return ret;
-}
 #endif
 
 static void frame_offset(AVFrame *frame, int dir, int is_pal)
@@ -1322,7 +1208,7 @@ scale:
             if (ret < 0)
                 return ret;
         }
-        ret = frame_copy_props(scale->temp_frame[0], in, 0);
+        ret = av_frame_copy_props(scale->temp_frame[0], in);
         if (ret < 0)
             return ret;
         scale->temp_frame[0]->extended_data = scale->temp_frame[0]->data;
@@ -1365,7 +1251,7 @@ scale:
         ret = conv_yuv420p10le_to_xv15(out, scale->temp_frame[1]);
         if (ret < 0)
             return ret;
-        ret = frame_copy_props(out, scale->temp_frame[1], 0);
+        ret = av_frame_copy_props(out, scale->temp_frame[1]);
         if (ret < 0)
             return ret;
 
