@@ -373,7 +373,10 @@ static int xvbm_convert_filter_frame(AVFilterLink *link, AVFrame *in)
 
     s->xvbm_filterLink = link;
 
-    if ((in->format == AV_PIX_FMT_XVBM_8) || (in->format == AV_PIX_FMT_XVBM_10)) {
+    if (
+        (in->format == AV_PIX_FMT_XVBM_8) || (in->format == AV_PIX_FMT_XVBM_10) &&
+        in->format != out->format
+    ) {
         reqMsg.pFrame = in;
         reqMsg.state  = XVBM_DMA_REQ_NEW;
         av_thread_message_queue_send(s->ReqMsgQ, &reqMsg, 0);
@@ -395,7 +398,7 @@ static int xvbm_convert_filter_frame(AVFilterLink *link, AVFrame *in)
     }
     ret = ff_filter_frame(outlink, out);
     if (ret < 0) {
-        av_log(NULL, AV_LOG_ERROR, "%s():: ff_filter_frame failed: ret=%d\n", __func__,ret);
+        av_log(NULL, AV_LOG_ERROR, "%s():: ff_filter_frame failed: ret=%d\n", __func__, ret);
         return ret;
     }
     return 0;

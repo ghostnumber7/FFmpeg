@@ -1117,54 +1117,6 @@ static int scale_field(ScaleContext *scale, AVFrame *dst, AVFrame *src,
     int orig_h_dst = dst->height;
     int ret;
 
-    AVFrame* temp;
-
-    // #if CONFIG_LIBXMA2API
-    // if ((src->width == dst->width) &&
-    //     (src->height == dst->height) &&
-    //     (!scale->out_color_matrix) &&
-    //     (scale->in_range == scale->out_range)) {
-    //     if ((src->format == AV_PIX_FMT_XV15) &&
-    //         (dst->format == AV_PIX_FMT_YUV420P10LE)) {
-    //         return conv_xv15_to_yuv420p10le(src, dst);
-    //     } else if ((src->format == AV_PIX_FMT_YUV420P10LE) &&
-    //         (dst->format == AV_PIX_FMT_XV15)) {
-    //         dst->linesize[0] = ((src->width + 2) / 3) * 4;
-    //         dst->linesize[1] = dst->linesize[0];
-    //         return conv_yuv420p10le_to_xv15(src, dst);
-    //     }
-    // }
-    // if(src->format == AV_PIX_FMT_XV15) {
-    //     if(scale->temp_frame[0] == NULL) {
-    //         ret = alloc_temp_frame(src, AV_PIX_FMT_YUV420P10LE, &scale->temp_frame[0]);
-    //         if (ret < 0)
-    //             return ret;
-    //     }
-    //     ret = frame_copy_props(scale->temp_frame[0], src, 0);
-    //     if (ret < 0)
-    //         return ret;
-    //     scale->temp_frame[0]->extended_data = scale->temp_frame[0]->data;
-
-    //     conv_xv15_to_yuv420p10le(src, scale->temp_frame[0]);
-
-    //     temp = scale->temp_frame[0];
-    //     scale->temp_frame[0] = src;
-    //     src = temp;
-    // }
-    // if(dst->format == AV_PIX_FMT_XV15) {
-    //     if(scale->temp_frame[1] == NULL) {
-    //         ret = alloc_temp_frame(dst, AV_PIX_FMT_YUV422P10LE, &scale->temp_frame[1]);
-    //         if (ret < 0)
-    //             return ret;
-    //     }
-    //     scale->temp_frame[1]->extended_data = scale->temp_frame[1]->data;
-
-    //     temp = scale->temp_frame[1];
-    //     scale->temp_frame[1] = dst;
-    //     dst = temp;
-    // }
-    // #endif
-
     // offset the data pointers for the bottom field
     if (field) {
         frame_offset(src, 1, scale->input_is_pal);
@@ -1195,26 +1147,6 @@ static int scale_field(ScaleContext *scale, AVFrame *dst, AVFrame *src,
         frame_offset(src, -1, scale->input_is_pal);
         frame_offset(dst, -1, scale->output_is_pal);
     }
-
-    // #if CONFIG_LIBXMA2API
-    // if(scale->temp_frame[0]) {
-    //     temp = scale->temp_frame[0];
-    //     scale->temp_frame[0] = src;
-    //     src = temp;
-    // }
-    // if(scale->temp_frame[1]) {
-    //     ret = conv_yuv420p10le_to_xv15(dst, scale->temp_frame[1]);
-    //     if (ret < 0)
-    //         return ret;
-    //     ret = frame_copy_props(dst, scale->temp_frame[1], 0);
-    //     if (ret < 0)
-    //         return ret;
-
-    //     temp = scale->temp_frame[1];
-    //     scale->temp_frame[1] = dst;
-    //     dst = temp;
-    // }
-    // #endif
 
     return 0;
 }
@@ -1381,14 +1313,67 @@ scale:
               (int64_t)in->sample_aspect_ratio.den * outlink->w * link->h,
               INT_MAX);
 
+    AVFrame* temp;
+
+    #if CONFIG_LIBXMA2API
+    if(in->format == AV_PIX_FMT_XV15) {
+        if(scale->temp_frame[0] == NULL) {
+            ret = alloc_temp_frame(in, AV_PIX_FMT_YUV420P10LE, &scale->temp_frame[0]);
+            if (ret < 0)
+                return ret;
+        }
+        ret = frame_copy_props(scale->temp_frame[0], in, 0);
+        if (ret < 0)
+            return ret;
+        scale->temp_frame[0]->extended_data = scale->temp_frame[0]->data;
+
+        conv_xv15_to_yuv420p10le(in, scale->temp_frame[0]);
+
+        temp = scale->temp_frame[0];
+        scale->temp_frame[0] = in;
+        in = temp;
+    }
+    if(out->format == AV_PIX_FMT_XV15) {
+        if(scale->temp_frame[1] == NULL) {
+            ret = alloc_temp_frame(out, AV_PIX_FMT_YUV422P10LE, &scale->temp_frame[1]);
+            if (ret < 0)
+                return ret;
+        }
+        scale->temp_frame[1]->extended_data = scale->temp_frame[1]->data;
+
+        temp = scale->temp_frame[1];
+        scale->temp_frame[1] = out;
+        out = temp;
+    }
+    #endif
+
     if (scale->interlaced>0 || (scale->interlaced<0 && in->interlaced_frame)) {
         ret = scale_field(scale, out, in, 0);
         if (ret >= 0)
             ret = scale_field(scale, out, in, 1);
     } else {
-        // TODO: Esto no funciona ... hay que hacer algo con el pix_fmpt
         ret = sws_scale_frame(scale->sws, out, in);
     }
+
+    #if CONFIG_LIBXMA2API
+    if(scale->temp_frame[0]) {
+        temp = scale->temp_frame[0];
+        scale->temp_frame[0] = in;
+        in = temp;
+    }
+    if(scale->temp_frame[1]) {
+        ret = conv_yuv420p10le_to_xv15(out, scale->temp_frame[1]);
+        if (ret < 0)
+            return ret;
+        ret = frame_copy_props(out, scale->temp_frame[1], 0);
+        if (ret < 0)
+            return ret;
+
+        temp = scale->temp_frame[1];
+        scale->temp_frame[1] = out;
+        out = temp;
+    }
+    #endif
 
     av_frame_free(&in);
     if (ret < 0)
